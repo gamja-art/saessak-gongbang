@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>새싹 공방 문의함</title>
+<style>
+  :root {
+    --bg: #faf5ec;
+    --card: #fffdf8;
+    --ink: #3b3027;
+    --ink-soft: #6e6052;
+    --line: #e2d5c1;
+    --moss: #5b7a4a;
+    --moss-deep: #435c36;
+    --clay: #c47a4f;
+    --err: #9a3d22;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; font-size: 16px; line-height: 1.6; word-break: keep-all; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 20px; margin: 4px 0 20px; }
+  button { font: inherit; cursor: pointer; }
+  .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+
+  /* 로그인 */
+  #login { max-width: 380px; margin: 60px auto 0; }
+  #login label { display: block; margin-bottom: 8px; }
+  #login input { width: 100%; font: inherit; font-size: 17px; padding: 12px; border: 1.5px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
+  .primary { width: 100%; background: var(--moss); color: #fff; border: 0; border-radius: 10px; padding: 13px; font-size: 17px; }
+  .error { color: var(--err); margin: 10px 0 0; }
+
+  /* 목록 */
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .count { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 16px; }
+  .count b { font-size: 36px; color: var(--clay); margin-right: 6px; }
+  .ghost { background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; color: var(--ink-soft); min-height: 44px; }
+  .item { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 12px; }
+  .item.new { border-left: 5px solid var(--clay); }
+  .meta { color: var(--ink-soft); font-size: 14px; }
+  .name { font-size: 18px; font-weight: 700; margin: 2px 0; }
+  .contact { display: inline-block; background: none; border: 0; padding: 4px 0; color: var(--moss-deep); text-decoration: underline; font-size: 17px; }
+  .time { margin: 6px 0 12px; }
+  .status { display: flex; gap: 8px; }
+  .status button { flex: 1; min-height: 44px; border: 1.5px solid var(--line); background: #fff; border-radius: 10px; color: var(--ink-soft); }
+  .status button.on { background: var(--moss); border-color: var(--moss); color: #fff; }
+  .empty { text-align: center; color: var(--ink-soft); padding: 40px 0; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <form id="login" class="box">
+    <h1>새싹 공방 문의함</h1>
+    <label for="pw">관리자 비밀번호</label>
+    <input type="password" id="pw" autocomplete="current-password" required>
+    <button class="primary" type="submit">들어가기</button>
+    <p class="error" id="login-err" hidden></p>
+  </form>
+
+  <div id="panel" hidden>
+    <div class="bar">
+      <h1>새싹 공방 문의함</h1>
+      <button class="ghost" id="logout" type="button">나가기</button>
+    </div>
+    <div class="count"><b id="new-count">0</b>건의 새 문의</div>
+    <div class="bar">
+      <span class="meta" id="total"></span>
+      <button class="ghost" id="reload" type="button">새로고침</button>
+    </div>
+    <p class="error" id="panel-err" hidden></p>
+    <div id="list"></div>
+  </div>
+
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+  (function () {
+    var KEY = 'saessak_admin_pw';
+    var STATUSES = ['새 문의', '연락함', '완료'];
+    var $ = function (id) { return document.getElementById(id); };
+
+    function getPw() { try { return sessionStorage.getItem(KEY) || ''; } catch (e) { return ''; } }
+    function setPw(v) { try { v ? sessionStorage.setItem(KEY, v) : sessionStorage.removeItem(KEY); } catch (e) {} }
+
+    function toast(text) {
+      var t = $('toast');
+      t.textContent = text;
+      t.hidden = false;
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(function () { t.hidden = true; }, 1800);
+    }
+
+    function fmt(iso) {
+      var d = new Date(iso);
+      return d.toLocaleString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function showLogin(errText) {
+      setPw('');
+      $('panel').hidden = true;
+      $('login').hidden = false;
+      $('login-err').hidden = !errText;
+      $('login-err').textContent = errText || '';
+      $('pw').value = '';
+      $('pw').focus();
+    }
+
+    async function api(method, body) {
+      var r = await fetch('/api/admin', {
+        method: method,
+        headers: Object.assign({ 'x-admin-password': getPw() }, body ? { 'Content-Type': 'application/json' } : {}),
+        body: body ? JSON.stringify(body) : undefined
+      });
+      var data = await r.json().catch(function () { return {}; });
+      return { status: r.status, ok: r.ok, data: data };
+    }
+
+    function render(rows) {
+      var list = $('list');
+      list.innerHTML = '';
+      $('new-count').textContent = rows.filter(function (r) { return r.status === '새 문의'; }).length;
+      $('total').textContent = '전체 ' + rows.length + '건 · 최신순';
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty">아직 들어온 문의가 없어요.</div>';
+        return;
+      }
+      rows.forEach(function (row) {
+        var el = document.createElement('div');
+        el.className = 'item' + (row.status === '새 문의' ? ' new' : '');
+
+        var meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = fmt(row.created_at);
+
+        var name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = row.name;
+
+        var contact = document.createElement('button');
+        contact.type = 'button';
+        contact.className = 'contact';
+        contact.textContent = row.contact;
+        contact.title = '눌러서 복사';
+        contact.addEventListener('click', function () {
+          navigator.clipboard.writeText(row.contact).then(function () {
+            toast('연락처를 복사했어요');
+          }, function () {
+            var range = document.createRange();
+            range.selectNodeContents(contact);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            toast('선택했어요. 길게 눌러 복사해 주세요');
+          });
+        });
+
+        var time = document.createElement('div');
+        time.className = 'time';
+        time.textContent = '희망 날짜·시간: ' + (row.preferred_time || '(적지 않음)');
+
+        var status = document.createElement('div');
+        status.className = 'status';
+        STATUSES.forEach(function (s) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = s;
+          if (row.status === s) b.className = 'on';
+          b.addEventListener('click', async function () {
+            if (row.status === s) return;
+            var res = await api('PATCH', { id: row.id, status: s });
+            if (res.status === 401) return showLogin('비밀번호가 맞지 않아요.');
+            if (!res.ok) return toast(res.data.error || '바꾸지 못했어요.');
+            toast('"' + s + '"(으)로 바꿨어요');
+            load();
+          });
+          status.appendChild(b);
+        });
+
+        el.append(meta, name, contact, time, status);
+        list.appendChild(el);
+      });
+    }
+
+    async function load() {
+      $('panel-err').hidden = true;
+      var res = await api('GET');
+      if (res.status === 401) return showLogin('비밀번호가 맞지 않아요.');
+      if (!res.ok) {
+        $('panel-err').textContent = res.data.error || '불러오지 못했어요.';
+        $('panel-err').hidden = false;
+        return;
+      }
+      $('login').hidden = true;
+      $('panel').hidden = false;
+      render(res.data.rows || []);
+    }
+
+    $('login').addEventListener('submit', function (e) {
+      e.preventDefault();
+      setPw($('pw').value);
+      load();
+    });
+    $('reload').addEventListener('click', load);
+    $('logout').addEventListener('click', function () { showLogin(''); });
+
+    if (getPw()) load(); else $('pw').focus();
+  })();
+</script>
+</body>
+</html>
